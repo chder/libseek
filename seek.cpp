@@ -127,28 +127,39 @@ void Imager::impl::init()
 		if (res < 0) {
 			libusb_free_device_list(devs, 1);
 			throw runtime_error("Failed to get device descriptor");
-		}
+                }
 
-		res = libusb_open(dev, &handle);
-		if (res < 0) {
-			libusb_free_device_list(devs, 1);
-			throw runtime_error("Failed to open device");
-		}
-
-		if (desc.idVendor == 0x289d && desc.idProduct == 0x0010) {
-			found = true;
-			printf("Found!\n");
-			break;
-		}
+                if (desc.idVendor == 0x289d && desc.idProduct == 0x0010) {
+                        found = true;
+                        printf("Found!\n");
+                        break;
+                }
 
 	} // for each device
 
 	if (!found) {
 		libusb_free_device_list(devs, 1);
 		throw runtime_error("Seek not found");
-	}
+        }else{
+            printf("\nDevice found");
+        }
 
-	printf("\nDevice found");
+        res = libusb_open(dev, &handle);
+        switch (res) {
+        case 0:
+            printf("\nDevice opened");
+            break;
+        case LIBUSB_ERROR_ACCESS:
+            throw runtime_error("Error LIBUSB_ERROR_ACCESS: insufficient permissions");
+        case LIBUSB_ERROR_NO_DEVICE:
+            throw runtime_error("Error LIBUSB_ERROR_NO_DEVICE: the device has been disconnected");
+        case LIBUSB_ERROR_NO_MEM :
+            throw runtime_error("Error LIBUSB_ERROR_NO_MEM: memory allocation failure");
+        default:
+            throw runtime_error("Unhandled libusb_open error");
+        }
+
+
 
 	int config2;
 	res = libusb_get_configuration(handle, &config2);
@@ -162,8 +173,8 @@ void Imager::impl::init()
 		res = libusb_set_configuration(handle, 1);
 		if (res != 0) {
 			libusb_free_device_list(devs, 1);
-			throw runtime_error("Couldn't set device configuration");
-		}
+                        throw runtime_error("Couldn't set device configuration");
+                }
 	}
 
 	libusb_free_device_list(devs, 1);
