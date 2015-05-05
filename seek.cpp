@@ -18,18 +18,6 @@ using namespace std;
 using namespace LibSeek;
 
 
-#if !defined(DEBUG)
-# define printf(...)
-#else
-# if defined(__ANDROID__)
-#  include <android/log.h>
-#  define LOG_TAG    "ZOUGLOUB-SEEK"
-#  define printf(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-# else
-#  define printf(...) fprintf(stderr, __VA_ARGS__)
-# endif
-#endif
-
 class Frame::impl {
  public:
 	int width = 208;
@@ -59,6 +47,9 @@ class Imager::impl {
 	struct libusb_device_descriptor desc;
 
 	Frame calib;
+    vector<uint16_t> lastFrame;
+    vector<bool> confident;
+    bool firstRun;
 
  public:
 	impl();
@@ -87,6 +78,9 @@ uint16_t const * Frame::data() { return &m->data[0]; }
 
 Imager::impl::impl()
 {
+    firstRun = true;
+    confident.resize(32448, false);
+    lastFrame.resize(32448, 0);
 	printf("%s:%d\n", __PRETTY_FUNCTION__, __LINE__);
 }
 
@@ -364,6 +358,8 @@ void Imager::impl::vendor_transfer(bool direction,
 
 Imager::Imager()
 {
+    calibrated = false;
+    firstRun = true;
 }
 
 Imager::~Imager()
@@ -424,9 +420,6 @@ void Imager::impl::frame_get_one(Frame & frame)
 			done += actual_length;
 		}
 	}
-
-	int w = frame.width();
-	int h = frame.height();
 }
 
 void Imager::frame_acquire(Frame & frame)
@@ -438,13 +431,18 @@ void Imager::frame_acquire(Frame & frame)
 		uint8_t status = rawdata[20];
 		printf("Status byte: %2x\n", status);
 
-		if (status == 1) {
+        if (status == 1) {
 			m->calib.m->rawdata = frame.m->rawdata;
+            calibrated = true;
 			printf("Calib\n");
-			continue;
+            //continue;
 		}
 
-		if (status != 3) {
+        if (!calibrated) {
+            continue;
+        }
+
+        if (status != 3) {
 			printf("Bad\n");
 			continue;
 		}
@@ -454,7 +452,7 @@ void Imager::frame_acquire(Frame & frame)
 		int h = frame.height();
 		int w = frame.width();
 
-		auto get_value = [&](int _y, int _x) -> int {
+        auto get_value = [&](int _y, int _x) -> int {
 			uint16_t v = reinterpret_cast<uint16_t*>
 			(rawdata.data())[_y*w+_x];
 			v = le16toh(v);
@@ -462,44 +460,64 @@ void Imager::frame_acquire(Frame & frame)
 			uint16_t v_cal = reinterpret_cast<uint16_t*>
 			(m->calib.m->rawdata.data())[_y*w+_x];
 			v_cal = le16toh(v_cal);
-			a -= v_cal;
+
+
+            if (m->confident[_y*w+_x]) {
+
+            }else{
+                if (firstRun){
+                    m->lastFrame[_y*w+_x] = v;
+                }
+
+                if (abs(v - m->lastFrame.at(_y*w+_x) > 100))
+                {
+                    m->confident[_y*w+_x] = true;
+                    printf("confidence grows");
+
+                }else{
+                    m->lastFrame[_y*w+_x] = v;
+                    v = 0;
+                    v_cal = 0;
+                }
+            }
+
+            a = v - v_cal;
+
 			return a;
 		};
 
 		for (int y = 0; y < h; y++) {
 			for (int x = 0; x < w; x++) {
-				int a;
-
-				uint16_t v = reinterpret_cast<uint16_t*>
-				 (rawdata.data())[y*w+x];
-				v = le16toh(v);
-
-				uint16_t v_cal = reinterpret_cast<uint16_t*>
-				 (m->calib.m->rawdata.data())[y*w+x];
-				v_cal = le16toh(v_cal);
-
-				a = int(v) - int(v_cal);
-
+                int a = get_value(y, x);
 
 				// basic black spot correction
-				if (x > 0 & x < w && y > 0 && y < h
-				 && v == 0 && v_cal == 0) {
-					a = 0
-					 + get_value(y-1, x-1)
-					 + get_value(y-1, x+0)
-					 + get_value(y-1, x+1)
-					 + get_value(y+0, x-1)
-					 + 0
-					 + get_value(y+0, x+1)
-					 + get_value(y+1, x-1)
-					 + get_value(y+1, x+0)
-					 + get_value(y+1, x+1)
-					 ;
-					a /= 8;
+                if (x > 0 && x < (w-1) && y > 0 && y < (h-1)
+                 ) { //&& a == 0) {
+
+
+                    int good = 0;
+                    a = 0;
+                    for (int i = -1; i <= 1; ++i)
+                    {
+                        for (int j = -1; j <= 1; ++j)
+                        {
+                           if (!(i == 0 && j == 0)) {
+                               int near = get_value(y+i, x+j);
+                               if (near) {
+                                   good++;
+                                   a += near;
+                               }
+                           }
+                        }
+                    }
+
+                    if (good) {
+                        a /= good;
+                    }
 				}
 
 				// level shift
-				a += 0x8000;
+                a += 0x8000;
 
 				if (a < 0) {
 					a = 0;
@@ -508,12 +526,14 @@ void Imager::frame_acquire(Frame & frame)
 					a = 0xFFFF;
 				}
 
-				v = a;
-
-				data[y*w+x] = v;
+                data[y*w+x] = a;
 			}
 		}
 
+        if (firstRun) {
+            firstRun = false;
+            continue;
+        }
 		break;
 	}
 }

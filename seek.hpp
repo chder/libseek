@@ -31,6 +31,8 @@ class Imager {
  private:
 	class impl;
 	pimpl<impl> m;
+    bool calibrated;
+    bool firstRun;
 
  public:
 	Imager();

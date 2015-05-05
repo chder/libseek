@@ -77,12 +77,26 @@ void MainWindow::doSomething()
             if (v < 0.0) { v = 0; }
             if (v > 1.0) { v = 1; }
 
-            uint8_t o = 0xff * v;
 
-            image.setPixel(x, y, qRgb(o,o,o));
+
+            uint8_t ror = abs(0xff  * (float(0.01-v)));
+            uint8_t gog = abs(0xff  * (float(0.5-v)));
+            uint8_t bob = abs(0xff  * (float(0.99-v)));
+
+            image.setPixel(x, y, qRgb(ror,gog,bob));
+            if (pixel == 0x8000)
+            {
+                image.setPixel(x, y, qRgb(0,0,0));
+            }
         }
     }
-    pixmap = QPixmap::fromImage(image);
+    int scale = 6;
+
+    QPixmap tmp = QPixmap::fromImage(image);
+    pixmap = tmp.scaled(w*scale,h*scale);
+
+    ui->videoLabel->setGeometry(16,16,w*scale,h*scale);
+
     ui->videoLabel->setPixmap(pixmap);
     if (liveMode)
         timer.start();
